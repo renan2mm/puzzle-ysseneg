@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Jigsaw Ysseneg</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+    <!-- Tela Inicial -->
+    <div id="startScreen" class="screen active">
+        <h1 id="gameTitle">Jigsaw Ysseneg</h1>
+        <button onclick="goToLevels()">Jogar</button>
+    </div>
+
+    <!-- Tela de Níveis -->
+    <div id="levelScreen" class="screen">
+        <h2>Escolha o Nível</h2>
+        <div id="levelsContainer"></div>
+        <button class="back-btn" onclick="goBack()">Voltar</button>
+    </div>
+
+    <!-- Tela do Jogo -->
+    <div id="gameScreen" class="screen">
+
+        <!-- botão para voltar aos níveis SEM F5 -->
+        <div class="top-controls">
+            <button class="back-btn" onclick="backToLevels()">Níveis</button>
+        </div>
+
+        <div class="game-wrapper">
+
+            <div class="profile-box">
+                <img id="profileImage" src="" alt="Perfil">
+            </div>
+
+            <div class="puzzle-area">
+                <div id="puzzleContainer"></div>
+            </div>
+
+        </div>
+
+        <!-- TELA DE VITÓRIA -->
+        <div id="victoryScreen" class="victory-screen">
+            <img id="victoryGif" src="">
+            <p id="victoryMessage"></p>
+            <div class="victory-buttons">
+                <button onclick="nextLevel()">Próximo Nível</button>
+                <button onclick="backToLevels()">Níveis</button>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
