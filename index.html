@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Jigsaw Ysseneg</title>
+    <title>Puzzle Ysseneg</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,13 +11,24 @@
 
     <!-- Tela Inicial -->
     <div id="startScreen" class="screen active">
-        <h1 id="gameTitle">Jigsaw Ysseneg</h1>
-        <button onclick="goToLevels()">Jogar</button>
+        <h1 id="gameTitle">Puzzle Ysseneg</h1>
+
+        <div class="start-actions">
+            <button onclick="goToLevels('solo')">Jogar Sozinho</button>
+            <button onclick="goToLevels('create-room')">Criar Sala</button>
+        </div>
+
+        <div class="join-room-box">
+            <input id="roomCodeInput" type="text" maxlength="12" placeholder="Código da sala">
+            <button onclick="joinRoom()">Entrar em Sala</button>
+        </div>
+
+        <p id="authInfo" class="subtitle"></p>
     </div>
 
     <!-- Tela de Níveis -->
     <div id="levelScreen" class="screen">
-        <h2>Escolha o Nível</h2>
+        <h2 id="levelScreenTitle">Escolha o Nível</h2>
         <div id="levelsContainer"></div>
         <button class="back-btn" onclick="goBack()">Voltar</button>
     </div>
@@ -25,15 +36,30 @@
     <!-- Tela do Jogo -->
     <div id="gameScreen" class="screen">
 
-        <!-- botão para voltar aos níveis SEM F5 -->
         <div class="top-controls">
             <button class="back-btn" onclick="backToLevels()">Níveis</button>
+
+            <div id="roomPanel" class="room-panel hidden">
+                <div class="room-panel-line">
+                    <span><strong>Modo:</strong> <span id="roomModeLabel">Sala</span></span>
+                    <span><strong>Sala:</strong> <span id="roomCodeLabel">-</span></span>
+                </div>
+
+                <div class="room-panel-line">
+                    <span><strong>Jogadores:</strong> <span id="roomPlayersLabel">-</span></span>
+                </div>
+
+                <div class="room-panel-actions">
+                    <button id="copyRoomBtn" onclick="copyRoomCode()">Copiar Código</button>
+                </div>
+            </div>
         </div>
 
         <div class="game-wrapper">
 
             <div class="profile-box">
                 <img id="profileImage" src="" alt="Perfil">
+                <div id="playerHint" class="player-hint"></div>
             </div>
 
             <div class="puzzle-area">
@@ -56,6 +82,6 @@
 
 </div>
 
-<script src="script.js"></script>
+<script type="module" src="script.js"></script>
 </body>
 </html>
