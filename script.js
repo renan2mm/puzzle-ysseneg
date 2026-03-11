@@ -1,65 +1,106 @@
-// ==========================
-// Puzzle FoxyB (V2)
-// Mantém arquitetura do projeto anterior:
-// startScreen -> levelScreen -> gameScreen -> victoryScreen
-// Mantém: contorno inteligente, desbloqueio progressivo em memória, botões Próximo/Níveis
-// Remove: personagens, frases, salvar imagem
-// ==========================
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import {
+  getFirestore,
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  onSnapshot,
+  runTransaction,
+  serverTimestamp,
+  arrayUnion
+} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-/**
- * CONFIG: você escolhe os arquivos dentro de /assets
- * Basta colocar os arquivos com esses nomes (ou mudar aqui).
- *
- * Estrutura sugerida:
- * assets/
- *   profile.jpg (ou png)
- *   background.jpg (ou png)
- *   victory.gif
- *   level1.jpg
- *   level2.jpg
- *   ...
- *   level10.jpg
- */
+// ==========================
+// CONFIG
+// ==========================
 const CONFIG = {
   title: "Jigsaw Ysseneg",
   totalLevels: 10,
-  // grade: nível 1=5x5, nível 2=6x6 ... nível 10=14x14
   levels: [5,6,7,8,9,10,11,12,13,14],
 
-  // nomes-base (sem extensão) — o loader tenta várias extensões
   assets: {
     profileBase: "assets/profile",
     backgroundBase: "assets/background",
-    // victory pode ser gif; loader tenta gif primeiro
     victoryBase: "assets/victory",
-    levelBase: "assets/level" // vira level1..level10
+    levelBase: "assets/level"
   },
 
-  // extensões aceitas (tentadas nessa ordem)
   exts: {
     image: ["jpg","jpeg","png","webp"],
     gifFirst: ["gif","webp","png","jpg","jpeg"]
   },
 
-  // tamanho máximo do puzzle na tela (mantém ideia do anterior)
   maxBox: 800
 };
 
+// ==========================
+// FIREBASE
+// PREENCHA COM OS DADOS DO SEU PROJETO
+// ==========================
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCSKloA3GOilGlPOiCxdCYDB72Q-xYnStc",
+  authDomain: "jigsaw-ysseneg.firebaseapp.com",
+  projectId: "jigsaw-ysseneg",
+  storageBucket: "jigsaw-ysseneg.firebasestorage.app",
+  messagingSenderId: "343706626582",
+  appId: "1:343706626582:web:9d64db86cf2423848e6337"
+};
+
+
+const hasFirebaseConfig =
+  FIREBASE_CONFIG.apiKey &&
+  FIREBASE_CONFIG.apiKey !== "COLOQUE_AQUI" &&
+  FIREBASE_CONFIG.projectId &&
+  FIREBASE_CONFIG.projectId !== "COLOQUE_AQUI";
+
+let app = null;
+let auth = null;
+let db = null;
+
+if (hasFirebaseConfig) {
+  app = initializeApp(FIREBASE_CONFIG);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} else {
+  console.warn("Firebase não configurado. O modo solo funciona; o multiplayer não.");
+}
+
+// ==========================
+// ESTADO GLOBAL
+// ==========================
 let currentLevel = 1;
 let gridSize = CONFIG.levels[0];
-let tiles = [];
-let firstSelected = null;
-
-// desbloqueio em memória (reinicia ao atualizar)
 let unlockedLevel = 1;
 
-// cache de imagens (pra não ficar recarregando toda hora)
 const imageCache = new Map();
+const tileElements = new Map();
+
+const state = {
+  mode: "solo", // solo | create-room | room
+  soloBoard: null, // piecePositions[pieceId] = currentPosition
+  firstSelected: null, // pieceId
+  roomId: null,
+  roomUnsub: null,
+  roomData: null,
+  user: null,
+  boardBuiltForLevel: null,
+  currentBoardImageSrc: null
+};
 
 // ==========================
-// Navegação de telas (arquitetura original)
+// NAVEGAÇÃO
 // ==========================
-function goToLevels(){
+function goToLevels(mode = "solo") {
+  state.mode = mode;
+  updateLevelScreenTitle();
+
   document.getElementById("startScreen").classList.remove("active");
   document.getElementById("levelScreen").classList.add("active");
   generateLevels();
@@ -70,18 +111,46 @@ function goBack() {
   document.getElementById("startScreen").classList.add("active");
 }
 
-// voltar pro menu de níveis sem F5
+function openGameScreen() {
+  document.getElementById("levelScreen").classList.remove("active");
+  document.getElementById("startScreen").classList.remove("active");
+  document.getElementById("gameScreen").classList.add("active");
+}
+
 function backToLevels() {
   const victory = document.getElementById("victoryScreen");
   if (victory) victory.style.display = "none";
 
+  clearRoomSubscription();
+  state.firstSelected = null;
+  state.roomId = null;
+  state.roomData = null;
+
   document.getElementById("gameScreen").classList.remove("active");
   document.getElementById("levelScreen").classList.add("active");
+
+  if (state.mode === "room") {
+    state.mode = "solo";
+  }
+
+  updateRoomPanel();
+  updateLevelScreenTitle();
   generateLevels();
 }
 
+function updateLevelScreenTitle() {
+  const el = document.getElementById("levelScreenTitle");
+  if (!el) return;
+
+  if (state.mode === "create-room") {
+    el.innerText = "Escolha o Nível da Sala";
+  } else {
+    el.innerText = "Escolha o Nível";
+  }
+}
+
 // ==========================
-// Loader de assets por tentativa de extensão
+// LOADER DE ASSETS
 // ==========================
 function loadImageTryExts(basePath, exts){
   const cacheKey = basePath + "|" + exts.join(",");
@@ -92,7 +161,7 @@ function loadImageTryExts(basePath, exts){
 
     const tryNext = () => {
       if (i >= exts.length) {
-        reject(new Error("Asset não encontrado: " + basePath + ".{"+exts.join(",")+"}"));
+        reject(new Error("Asset não encontrado: " + basePath + ".{" + exts.join(",") + "}"));
         return;
       }
 
@@ -115,7 +184,6 @@ async function applyBackground(){
     const { src } = await loadImageTryExts(CONFIG.assets.backgroundBase, CONFIG.exts.image);
     document.body.style.backgroundImage = `url(${src})`;
   }catch(e){
-    // sem fundo, ok (fica cor base)
     console.warn(e.message);
   }
 }
@@ -147,7 +215,52 @@ function levelBasePath(level){
 }
 
 // ==========================
-// Níveis
+// AUTH
+// ==========================
+if (auth) {
+  onAuthStateChanged(auth, (user) => {
+    state.user = user || null;
+    updateAuthInfo();
+    updatePlayerHint();
+  });
+} else {
+  updateAuthInfo();
+}
+
+async function ensureAuth() {
+  if (!auth) {
+    alert("Você precisa configurar o Firebase primeiro para usar multiplayer.");
+    return null;
+  }
+
+  if (state.user) return state.user;
+
+  const provider = new GoogleAuthProvider();
+  const result = await signInWithPopup(auth, provider);
+  state.user = result.user;
+  updateAuthInfo();
+  updatePlayerHint();
+  return result.user;
+}
+
+function updateAuthInfo() {
+  const el = document.getElementById("authInfo");
+  if (!el) return;
+
+  if (!hasFirebaseConfig) {
+    el.innerText = "Modo solo disponível. Para o multiplayer, preencha o firebaseConfig no script.js.";
+    return;
+  }
+
+  if (state.user) {
+    el.innerText = `Logado como ${state.user.displayName || state.user.email || "jogador"}.`;
+  } else {
+    el.innerText = "O login Google será pedido apenas ao criar ou entrar em uma sala.";
+  }
+}
+
+// ==========================
+// NÍVEIS
 // ==========================
 function generateLevels() {
   const container = document.getElementById("levelsContainer");
@@ -168,45 +281,76 @@ async function startLevel(level) {
   currentLevel = level;
   gridSize = CONFIG.levels[level - 1];
 
-  document.getElementById("levelScreen").classList.remove("active");
-  document.getElementById("gameScreen").classList.add("active");
+  if (state.mode === "create-room") {
+    await createRoom(level);
+    return;
+  }
 
-  // carrega perfil e fundo (globais)
+  await startSoloLevel(level);
+}
+
+async function startSoloLevel(level) {
+  currentLevel = level;
+  gridSize = CONFIG.levels[level - 1];
+  state.mode = "solo";
+  state.roomId = null;
+  state.roomData = null;
+  state.firstSelected = null;
+
+  openGameScreen();
+  updateRoomPanel();
   await loadProfileImage();
+  await buildBoardUI(currentLevel);
 
-  await createPuzzle();
+  state.soloBoard = createShuffledPiecePositions(gridSize * gridSize);
+  applyBoardState(state.soloBoard, {});
+  updatePlayerHint();
 }
 
 // ==========================
-// Puzzle (mesma lógica do anterior)
+// BOARD
 // ==========================
-async function createPuzzle() {
+function createShuffledPiecePositions(totalPieces) {
+  const shuffled = [];
+  for (let i = 0; i < totalPieces; i++) shuffled.push(i);
+
+  shuffle(shuffled);
+  while (shuffled.every((v, i) => v === i)) shuffle(shuffled);
+
+  const piecePositions = new Array(totalPieces);
+  shuffled.forEach((pieceId, position) => {
+    piecePositions[pieceId] = position;
+  });
+
+  return piecePositions;
+}
+
+async function buildBoardUI(level) {
   const container = document.getElementById("puzzleContainer");
   container.innerHTML = "";
-  firstSelected = null;
+  tileElements.clear();
 
-  // carrega imagem do nível (assets/levelN.ext)
   let imgObj;
   try{
-    imgObj = await loadImageTryExts(levelBasePath(currentLevel), CONFIG.exts.image);
+    imgObj = await loadImageTryExts(levelBasePath(level), CONFIG.exts.image);
   }catch(e){
-    // mostra erro visível
     container.style.width = "auto";
     container.style.height = "auto";
     container.style.display = "block";
     container.style.padding = "18px";
     container.innerHTML = `<div style="max-width:720px;margin:0 auto;line-height:1.35;opacity:.9;">
-      <b>Não encontrei a imagem do nível ${currentLevel}</b>.<br>
-      Coloque em <code>assets/</code> um arquivo chamado <code>level${currentLevel}.jpg</code> (ou png/webp/jpeg).<br>
-      Exemplo: <code>${levelBasePath(currentLevel)}.jpg</code>
+      <b>Não encontrei a imagem do nível ${level}</b>.<br>
+      Coloque em <code>assets/</code> um arquivo chamado <code>level${level}.jpg</code> (ou png/webp/jpeg).<br>
+      Exemplo: <code>${levelBasePath(level)}.jpg</code>
     </div>`;
     console.warn(e.message);
     return;
   }
 
-  const image = imgObj.img;
+  state.boardBuiltForLevel = level;
+  state.currentBoardImageSrc = imgObj.src;
 
-  // mantém lógica do anterior: calcula caixa 800x800 ajustada pelo ratio
+  const image = imgObj.img;
   const ratio = image.width / image.height;
   let width = CONFIG.maxBox;
   let height = CONFIG.maxBox;
@@ -221,30 +365,24 @@ async function createPuzzle() {
   container.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
   container.style.gridTemplateRows = `repeat(${gridSize}, 1fr)`;
 
-  tiles = [];
-  for (let i = 0; i < gridSize * gridSize; i++) tiles.push(i);
+  const totalPieces = gridSize * gridSize;
 
-  shuffle(tiles);
-  while (tiles.every((v,i)=>v===i)) shuffle(tiles);
-
-  tiles.forEach((value, index) => {
+  for (let pieceId = 0; pieceId < totalPieces; pieceId++) {
     const tile = document.createElement("div");
     tile.classList.add("tile");
-    tile.dataset.correct = value;
-    tile.dataset.current = index;
+    tile.dataset.correct = pieceId;
+    tile.dataset.current = pieceId;
 
-    const x = value % gridSize;
-    const y = Math.floor(value / gridSize);
+    const x = pieceId % gridSize;
+    const y = Math.floor(pieceId / gridSize);
 
-    // sem deformar: backgroundSize/Position como no anterior
     tile.style.backgroundImage = `url(${imgObj.src})`;
-    tile.style.backgroundSize = `${gridSize*100}% ${gridSize*100}%`;
+    tile.style.backgroundSize = `${gridSize * 100}% ${gridSize * 100}%`;
     tile.style.backgroundPosition =
-      `${x*(100/(gridSize-1))}% ${y*(100/(gridSize-1))}%`;
+      `${x * (100 / (gridSize - 1))}% ${y * (100 / (gridSize - 1))}%`;
 
-    tile.onclick = () => selectTile(tile);
+    tile.onclick = () => handleTileClick(pieceId);
 
-    // contorno inteligente (hover)
     tile.addEventListener("mouseenter", () => {
       tile.classList.remove("correct-hover", "wrong-hover");
       if (tile.dataset.current === tile.dataset.correct) {
@@ -259,13 +397,36 @@ async function createPuzzle() {
       tile.classList.remove("wrong-hover");
     });
 
+    tileElements.set(pieceId, tile);
     container.appendChild(tile);
-  });
-
-  updateTilePositions();
+  }
 }
 
-// recalcula hover depois da troca (mantido)
+function applyBoardState(piecePositions, locks = {}) {
+  tileElements.forEach((tile, pieceId) => {
+    const currentPosition = piecePositions[pieceId];
+    tile.dataset.current = String(currentPosition);
+    tile.style.order = currentPosition;
+
+    tile.classList.remove("selected", "locked-by-me", "locked-by-other");
+
+    const lockedBy = locks[pieceId];
+    if (lockedBy) {
+      if (state.user && lockedBy === state.user.uid) {
+        tile.classList.add("locked-by-me");
+      } else {
+        tile.classList.add("locked-by-other");
+      }
+    }
+
+    if (state.firstSelected === pieceId) {
+      tile.classList.add("selected");
+    }
+
+    updateHoverState(tile);
+  });
+}
+
 function updateHoverState(tile) {
   tile.classList.remove("correct-hover", "wrong-hover");
   if (tile.matches(":hover")) {
@@ -277,49 +438,418 @@ function updateHoverState(tile) {
   }
 }
 
-function selectTile(tile) {
-  if (!firstSelected) {
-    firstSelected = tile;
-    tile.classList.add("selected");
-  } else {
-    swapTiles(firstSelected, tile);
-    firstSelected.classList.remove("selected");
-    firstSelected = null;
-    checkWin();
+function isSolved(piecePositions) {
+  return piecePositions.every((position, pieceId) => position === pieceId);
+}
+
+// ==========================
+// CLIQUES NAS PEÇAS
+// ==========================
+async function handleTileClick(pieceId) {
+  if (state.mode === "room") {
+    await handleRoomTileClick(pieceId);
+    return;
+  }
+
+  handleSoloTileClick(pieceId);
+}
+
+function handleSoloTileClick(pieceId) {
+  if (state.firstSelected === null) {
+    state.firstSelected = pieceId;
+    applyBoardState(state.soloBoard, {});
+    updatePlayerHint();
+    return;
+  }
+
+  if (state.firstSelected === pieceId) {
+    state.firstSelected = null;
+    applyBoardState(state.soloBoard, {});
+    updatePlayerHint();
+    return;
+  }
+
+  swapPositions(state.soloBoard, state.firstSelected, pieceId);
+  state.firstSelected = null;
+  applyBoardState(state.soloBoard, {});
+  updatePlayerHint();
+
+  if (isSolved(state.soloBoard)) {
+    showVictory("solo");
   }
 }
 
-function swapTiles(t1, t2) {
-  const temp = t1.dataset.current;
-  t1.dataset.current = t2.dataset.current;
-  t2.dataset.current = temp;
+async function handleRoomTileClick(pieceId) {
+  if (!state.roomId || !state.roomData || !state.user) return;
 
-  updateTilePositions();
-  updateHoverState(t1);
-  updateHoverState(t2);
+  const locks = state.roomData.board?.locks || {};
+  const lockedBy = locks[pieceId];
+
+  if (lockedBy && lockedBy !== state.user.uid) {
+    return;
+  }
+
+  if (state.firstSelected === null) {
+    const ok = await roomTryPick(pieceId);
+    if (ok) {
+      state.firstSelected = pieceId;
+      updatePlayerHint();
+    }
+    return;
+  }
+
+  if (state.firstSelected === pieceId) {
+    await roomReleasePiece(pieceId);
+    state.firstSelected = null;
+    updatePlayerHint();
+    return;
+  }
+
+  const ok = await roomTrySwap(state.firstSelected, pieceId);
+  if (ok) {
+    state.firstSelected = null;
+    updatePlayerHint();
+  }
 }
 
-function updateTilePositions() {
-  document.querySelectorAll(".tile").forEach(tile=>{
-    tile.style.order = tile.dataset.current;
-  });
-}
-
-function checkWin() {
-  let correct = true;
-  document.querySelectorAll(".tile").forEach(tile=>{
-    if(tile.dataset.current !== tile.dataset.correct) correct=false;
-  });
-  if(correct) showVictory();
+function swapPositions(piecePositions, pieceA, pieceB) {
+  const temp = piecePositions[pieceA];
+  piecePositions[pieceA] = piecePositions[pieceB];
+  piecePositions[pieceB] = temp;
 }
 
 // ==========================
-// Vitória (mantém botões Próximo / Níveis, remove salvar imagem)
+// MULTIPLAYER
 // ==========================
-async function showVictory() {
-  // desbloqueia o próximo nível (em memória)
-  if (currentLevel < CONFIG.totalLevels) {
-    unlockedLevel = Math.min(CONFIG.totalLevels, Math.max(unlockedLevel, currentLevel + 1));
+function roomRef(roomId) {
+  return doc(db, "puzzleRooms", roomId);
+}
+
+async function createRoom(level) {
+  const user = await ensureAuth();
+  if (!user) return;
+
+  currentLevel = level;
+  gridSize = CONFIG.levels[level - 1];
+
+  const roomId = generateRoomCode();
+  const piecePositions = createShuffledPiecePositions(gridSize * gridSize);
+
+  await setDoc(roomRef(roomId), {
+    roomId,
+    level,
+    gridSize,
+    status: "playing",
+    createdBy: user.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    playerIds: [user.uid],
+    playerNames: {
+      [user.uid]: user.displayName || user.email || "Jogador"
+    },
+    board: {
+      piecePositions,
+      locks: {}
+    }
+  });
+
+  state.mode = "room";
+  state.roomId = roomId;
+  currentLevel = level;
+  gridSize = CONFIG.levels[level - 1];
+
+  openGameScreen();
+  updateRoomPanel();
+  await loadProfileImage();
+  await buildBoardUI(level);
+  subscribeToRoom(roomId);
+}
+
+async function joinRoom() {
+  const codeInput = document.getElementById("roomCodeInput");
+  const roomId = (codeInput.value || "").trim().toUpperCase();
+
+  if (!roomId) {
+    alert("Digite o código da sala.");
+    return;
+  }
+
+  if (!hasFirebaseConfig) {
+    alert("Preencha o firebaseConfig no script.js para usar o multiplayer.");
+    return;
+  }
+
+  const user = await ensureAuth();
+  if (!user) return;
+
+  const snap = await getDoc(roomRef(roomId));
+  if (!snap.exists()) {
+    alert("Sala não encontrada.");
+    return;
+  }
+
+  const data = snap.data();
+
+  await updateDoc(roomRef(roomId), {
+    playerIds: arrayUnion(user.uid),
+    [`playerNames.${user.uid}`]: user.displayName || user.email || "Jogador",
+    updatedAt: serverTimestamp()
+  });
+
+  state.mode = "room";
+  state.roomId = roomId;
+  currentLevel = data.level;
+  gridSize = data.gridSize;
+  state.firstSelected = null;
+
+  openGameScreen();
+  updateRoomPanel();
+  await loadProfileImage();
+  await buildBoardUI(currentLevel);
+  subscribeToRoom(roomId);
+}
+
+function subscribeToRoom(roomId) {
+  clearRoomSubscription();
+
+  state.roomUnsub = onSnapshot(roomRef(roomId), async (snap) => {
+    if (!snap.exists()) {
+      alert("A sala foi removida.");
+      backToLevels();
+      return;
+    }
+
+    const data = snap.data();
+    state.roomData = data;
+    currentLevel = data.level;
+    gridSize = data.gridSize;
+
+    if (state.boardBuiltForLevel !== data.level) {
+      await buildBoardUI(data.level);
+    }
+
+    applyBoardState(data.board.piecePositions, data.board.locks || {});
+    updateRoomPanel();
+    updatePlayerHint();
+
+    if (data.status === "complete") {
+      showVictory("room", data.completedByName || "Sala concluída!");
+    } else {
+      document.getElementById("victoryScreen").style.display = "none";
+    }
+  });
+}
+
+function clearRoomSubscription() {
+  if (state.roomUnsub) {
+    state.roomUnsub();
+    state.roomUnsub = null;
+  }
+}
+
+async function roomTryPick(pieceId) {
+  try {
+    await runTransaction(db, async (transaction) => {
+      const ref = roomRef(state.roomId);
+      const snap = await transaction.get(ref);
+
+      if (!snap.exists()) throw new Error("Sala inexistente.");
+
+      const data = snap.data();
+      if (data.status === "complete") throw new Error("A sala já terminou.");
+
+      const board = data.board || {};
+      const locks = { ...(board.locks || {}) };
+
+      if (locks[pieceId] && locks[pieceId] !== state.user.uid) {
+        throw new Error("Peça em uso.");
+      }
+
+      locks[pieceId] = state.user.uid;
+
+      transaction.update(ref, {
+        board: {
+          piecePositions: [...board.piecePositions],
+          locks
+        },
+        updatedAt: serverTimestamp()
+      });
+    });
+
+    return true;
+  } catch (e) {
+    console.warn(e.message);
+    return false;
+  }
+}
+
+async function roomReleasePiece(pieceId) {
+  try {
+    await runTransaction(db, async (transaction) => {
+      const ref = roomRef(state.roomId);
+      const snap = await transaction.get(ref);
+
+      if (!snap.exists()) throw new Error("Sala inexistente.");
+
+      const data = snap.data();
+      const board = data.board || {};
+      const locks = { ...(board.locks || {}) };
+
+      if (locks[pieceId] !== state.user.uid) return;
+
+      delete locks[pieceId];
+
+      transaction.update(ref, {
+        board: {
+          piecePositions: [...board.piecePositions],
+          locks
+        },
+        updatedAt: serverTimestamp()
+      });
+    });
+
+    return true;
+  } catch (e) {
+    console.warn(e.message);
+    return false;
+  }
+}
+
+async function roomTrySwap(pieceA, pieceB) {
+  try {
+    await runTransaction(db, async (transaction) => {
+      const ref = roomRef(state.roomId);
+      const snap = await transaction.get(ref);
+
+      if (!snap.exists()) throw new Error("Sala inexistente.");
+
+      const data = snap.data();
+      if (data.status === "complete") throw new Error("A sala já terminou.");
+
+      const board = data.board || {};
+      const piecePositions = [...board.piecePositions];
+      const locks = { ...(board.locks || {}) };
+
+      if (locks[pieceA] !== state.user.uid) {
+        throw new Error("Você não está segurando a primeira peça.");
+      }
+
+      if (locks[pieceB] && locks[pieceB] !== state.user.uid) {
+        throw new Error("A segunda peça está em uso.");
+      }
+
+      const temp = piecePositions[pieceA];
+      piecePositions[pieceA] = piecePositions[pieceB];
+      piecePositions[pieceB] = temp;
+
+      delete locks[pieceA];
+      delete locks[pieceB];
+
+      const solved = piecePositions.every((pos, pieceId) => pos === pieceId);
+
+      const payload = {
+        board: {
+          piecePositions,
+          locks
+        },
+        updatedAt: serverTimestamp()
+      };
+
+      if (solved) {
+        payload.status = "complete";
+        payload.completedBy = state.user.uid;
+        payload.completedByName = state.user.displayName || state.user.email || "Jogador";
+      }
+
+      transaction.update(ref, payload);
+    });
+
+    return true;
+  } catch (e) {
+    console.warn(e.message);
+    return false;
+  }
+}
+
+function generateRoomCode(length = 6) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+// ==========================
+// HUD / UI
+// ==========================
+function updateRoomPanel() {
+  const panel = document.getElementById("roomPanel");
+  const modeLabel = document.getElementById("roomModeLabel");
+  const roomCodeLabel = document.getElementById("roomCodeLabel");
+  const roomPlayersLabel = document.getElementById("roomPlayersLabel");
+
+  if (state.mode === "room" && state.roomId) {
+    panel.classList.remove("hidden");
+    modeLabel.innerText = "Cooperativo";
+    roomCodeLabel.innerText = state.roomId;
+
+    if (state.roomData?.playerNames) {
+      roomPlayersLabel.innerText = Object.values(state.roomData.playerNames).join(", ");
+    } else {
+      roomPlayersLabel.innerText = "-";
+    }
+  } else {
+    panel.classList.add("hidden");
+    modeLabel.innerText = "-";
+    roomCodeLabel.innerText = "-";
+    roomPlayersLabel.innerText = "-";
+  }
+}
+
+function updatePlayerHint() {
+  const el = document.getElementById("playerHint");
+  if (!el) return;
+
+  if (state.mode === "room") {
+    if (!state.user) {
+      el.innerText = "Faça login para jogar em salas.";
+      return;
+    }
+
+    if (state.firstSelected === null) {
+      el.innerText = "Modo cooperativo: clique em uma peça para reservá-la e depois clique na peça que deseja trocar.";
+    } else {
+      el.innerText = "Você está segurando uma peça. Clique em outra para trocar, ou clique nela novamente para soltar.";
+    }
+    return;
+  }
+
+  if (state.firstSelected === null) {
+    el.innerText = "Modo solo: clique em uma peça e depois em outra para trocar.";
+  } else {
+    el.innerText = "Peça selecionada. Clique em outra para trocar, ou clique novamente nela para cancelar.";
+  }
+}
+
+async function copyRoomCode() {
+  if (!state.roomId) return;
+  try {
+    await navigator.clipboard.writeText(state.roomId);
+    alert("Código da sala copiado.");
+  } catch {
+    alert("Não consegui copiar automaticamente. Código: " + state.roomId);
+  }
+}
+
+// ==========================
+// VITÓRIA
+// ==========================
+async function showVictory(kind = "solo", roomMessage = "") {
+  if (kind === "solo") {
+    if (currentLevel < CONFIG.totalLevels) {
+      unlockedLevel = Math.min(CONFIG.totalLevels, Math.max(unlockedLevel, currentLevel + 1));
+    }
   }
 
   const screen = document.getElementById("victoryScreen");
@@ -327,42 +857,115 @@ async function showVictory() {
 
   await loadVictoryGif();
 
+ if (kind === "room") {
+
+  if (currentLevel === CONFIG.totalLevels) {
+    msg.innerText = "Parabéns! Venceram o jogo!!!";
+  } else {
+    msg.innerText = `Parabéns! Concluíram o nível ${currentLevel}!!`;
+  }
+
+} else {
+
   msg.innerText = currentLevel === CONFIG.totalLevels
     ? "Você completou todos os níveis."
     : `Nível ${currentLevel} concluído!`;
 
+}
+
   screen.style.display = "flex";
 }
 
-function nextLevel() {
+async function nextLevel() {
   document.getElementById("victoryScreen").style.display = "none";
-  if(currentLevel < CONFIG.totalLevels) startLevel(currentLevel + 1);
-}
 
+  if (state.mode === "room") {
+    await roomNextLevel();
+    return;
+  }
+
+  if (currentLevel < CONFIG.totalLevels) {
+    await startSoloLevel(currentLevel + 1);
+  }
+}
+async function roomNextLevel() {
+  if (!state.roomId || !state.user) return;
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const ref = roomRef(state.roomId);
+      const snap = await transaction.get(ref);
+
+      if (!snap.exists()) throw new Error("Sala inexistente.");
+
+      const data = snap.data();
+
+      // Só o dono da sala pode avançar
+      if (data.createdBy !== state.user.uid) {
+        throw new Error("Só o dono da sala pode avançar o nível.");
+      }
+
+      // Só pode avançar se a sala ainda estiver na tela de vitória
+      if (data.status !== "complete") {
+        throw new Error("A sala já avançou de nível.");
+      }
+
+      const next = data.level + 1;
+
+      if (next > CONFIG.totalLevels) {
+        throw new Error("Vocês já concluíram o último nível.");
+      }
+
+      const nextGridSize = CONFIG.levels[next - 1];
+      const piecePositions = createShuffledPiecePositions(nextGridSize * nextGridSize);
+
+      transaction.update(ref, {
+        level: next,
+        gridSize: nextGridSize,
+        status: "playing",
+        completedBy: null,
+        completedByName: null,
+        board: {
+          piecePositions,
+          locks: {}
+        },
+        updatedAt: serverTimestamp()
+      });
+    });
+
+    state.firstSelected = null;
+
+  } catch (e) {
+    alert(e.message);
+  }
+}
 // ==========================
-// Utils
+// UTILS
 // ==========================
 function shuffle(array){
-  for(let i=array.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [array[i],array[j]]=[array[j],array[i]];
+  for(let i = array.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
   }
 }
 
 // ==========================
-// Boot
+// BOOT
 // ==========================
 (function init(){
   document.getElementById("gameTitle").innerText = CONFIG.title;
   document.title = CONFIG.title;
 
-  // fundo global (opcional)
   applyBackground();
+  updatePlayerHint();
+  updateRoomPanel();
+  updateLevelScreenTitle();
 
-  // expõe funções no escopo global (porque o HTML chama onclick="")
   window.goToLevels = goToLevels;
   window.goBack = goBack;
   window.backToLevels = backToLevels;
   window.startLevel = startLevel;
   window.nextLevel = nextLevel;
+  window.joinRoom = joinRoom;
+  window.copyRoomCode = copyRoomCode;
 })();
