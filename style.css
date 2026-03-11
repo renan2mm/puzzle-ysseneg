@@ -10,11 +10,10 @@
 }
 
 body {
-    /* Fundo será setado pelo JS (CONFIG.bg), sem deformar */
     background-color: #0f0f0f;
     background-repeat: no-repeat;
     background-position: center center;
-    background-size: contain;  /* ✅ sem deformar e sem cortar */
+    background-size: contain;
     color: white;
     min-height: 100vh;
     display: flex;
@@ -51,10 +50,40 @@ h1, h2 {
 
 .subtitle{
     opacity: 0.75;
-    margin: 0 auto 18px auto;
+    margin: 12px auto 0 auto;
     max-width: 720px;
     line-height: 1.35;
     font-size: 14px;
+}
+
+.start-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.join-room-box {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+    margin-top: 18px;
+    flex-wrap: wrap;
+}
+
+.join-room-box input {
+    width: 220px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(0,0,0,0.45);
+    color: white;
+    outline: none;
+}
+
+.join-room-box input::placeholder{
+    color: rgba(255,255,255,0.55);
 }
 
 button {
@@ -89,7 +118,6 @@ button:disabled{
     flex-wrap: wrap;
 }
 
-/* PROFILE BOX (ajustado para qualquer formato, sem cortar/deformar) */
 .profile-box {
     width: 320px;
     background: rgba(10, 10, 14, 0.72);
@@ -101,17 +129,28 @@ button:disabled{
     padding: 10px;
     border-radius: 10px;
     backdrop-filter: blur(2px);
+    gap: 12px;
 }
 
 .profile-box img {
     width: 100%;
     height: 220px;
-    object-fit: contain; /* ✅ sem deformar nem cortar */
+    object-fit: contain;
     background: rgba(0,0,0,0.25);
     border-radius: 8px;
 }
 
-/* PUZZLE */
+.player-hint{
+    width: 100%;
+    min-height: 48px;
+    padding: 10px 12px;
+    line-height: 1.35;
+    font-size: 14px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    opacity: 0.9;
+}
+
 .puzzle-area {
     max-width: 800px;
     max-height: 800px;
@@ -128,7 +167,6 @@ button:disabled{
     outline: 1px solid rgba(255,255,255,0.12);
 }
 
-/* TELA DE VITÓRIA */
 .victory-screen {
     position: absolute;
     top: 0;
@@ -147,7 +185,7 @@ button:disabled{
 .victory-screen img {
     max-width: 800px;
     max-height: 800px;
-    object-fit: contain; /* ✅ sem deformar nem cortar */
+    object-fit: contain;
     margin-bottom: 20px;
     background: rgba(0,0,0,0.25);
     border-radius: 10px;
@@ -170,14 +208,15 @@ button:disabled{
     margin-top: 20px;
 }
 
-/* Contorno inteligente */
 .tile {
     cursor: pointer;
-    transition: outline 0.1s ease;
+    transition: outline 0.1s ease, opacity 0.15s ease, filter 0.15s ease;
+    position: relative;
 }
 
 .tile.selected {
     outline: 3px solid yellow;
+    z-index: 2;
 }
 
 .tile.correct-hover {
@@ -188,12 +227,67 @@ button:disabled{
     outline: 3px solid #ff0000;
 }
 
-/* Barra simples para o botão "Níveis" */
+.tile.locked-by-me {
+    outline: 3px solid #ffe14a;
+    z-index: 2;
+}
+
+.tile.locked-by-other {
+    outline: 3px solid #2aa7ff;
+    opacity: 0.8;
+    filter: grayscale(0.08);
+    cursor: not-allowed;
+}
+
+.tile.locked-by-other::after {
+    content: "Em uso";
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.78);
+    color: #9fd8ff;
+    pointer-events: none;
+}
+
 .top-controls{
     width: 100%;
     display: flex;
     justify-content: center;
+    align-items: flex-start;
+    gap: 14px;
     margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+.room-panel {
+    background: rgba(0,0,0,0.46);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 12px 14px;
+    min-width: 280px;
+    text-align: left;
+    backdrop-filter: blur(2px);
+}
+
+.room-panel-line {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.room-panel-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.hidden {
+    display: none !important;
 }
 
 @keyframes fade {
