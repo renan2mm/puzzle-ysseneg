@@ -842,6 +842,14 @@ async function copyRoomCode() {
   }
 }
 
+function openReferenceImage() {
+  if (!state.currentBoardImageSrc) {
+    alert("A imagem de referência ainda não foi carregada.");
+    return;
+  }
+
+  window.open(state.currentBoardImageSrc, "_blank");
+}
 // ==========================
 // VITÓRIA
 // ==========================
@@ -968,4 +976,5 @@ function shuffle(array){
   window.nextLevel = nextLevel;
   window.joinRoom = joinRoom;
   window.copyRoomCode = copyRoomCode;
+  window.openReferenceImage = openReferenceImage;
 })();
